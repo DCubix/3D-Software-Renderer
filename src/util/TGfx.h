@@ -12,6 +12,7 @@
 
 #include "TMatrixStack.h"
 #include "../data/TStructs.h"
+#include "../data/TFrameBuffer.h"
 
 #define T_MAX_MATRIX_TACK_DEPTH 128
 
@@ -24,19 +25,39 @@ public:
 	void destroy();
 
 	bool shouldClose() const { return m_shouldClose; }
-	void update();
+	void flip();
+	void poll();
+	double time() const { return double(SDL_GetTicks()) / 1000.0; }
 
 	/// Drawing Functions
 	void clear(glm::vec3 color = { 0.0f, 0.0f, 0.0f });
-	void pixel(int x, int y, glm::vec3 color);
-	void line(int x1, int y1, int x2, int y2, glm::vec3 color);
+	void pixel(int x, int y, glm::vec4 color);
+	void line(int x1, int y1, int x2, int y2, glm::vec4 color);
 
 	/// 3D drawing
-	void line(const TVertex& v0, const TVertex& v1);
 	void triangle(const TVertex& v0, const TVertex& v1, const TVertex& v2);
+	void triangleUC(const TVertex& v0, const TVertex& v1, const TVertex& v2);
 
 	TMatrixStack& modelView() { return m_modelMatrixStack; }
 	TMatrixStack& projection() { return m_projectionMatrixStack; }
+
+	TFrameBuffer* target() {
+		if (m_target == nullptr)
+			return m_defaultTarget;
+		return m_target;
+	}
+
+	void target(TFrameBuffer* target) { m_target = target; }
+
+	TTexture* boundTexture() { return m_boundTexture; }
+	void boundTexture(TTexture* tex) { m_boundTexture = tex; }
+
+	TShader* boundShader() { 
+		if (m_boundShader == nullptr)
+			return g_defaultShader;
+		return m_boundShader;
+	}
+	void boundShader(TShader* shader) { m_boundShader = shader; }
 
 private:
 	bool m_shouldClose;
@@ -49,13 +70,16 @@ private:
 	SDL_Renderer* m_renderer;
 	SDL_Texture* m_screenBuffer;
 
-	glm::vec3* m_pixels;
+	TTexture* m_boundTexture;
+	TShader* m_boundShader;
+
+	TFrameBuffer* m_defaultTarget;
+	TFrameBuffer* m_target;
 
 	TMatrixStack m_modelMatrixStack, m_projectionMatrixStack;
 	glm::mat4 m_viewportMatrix;
 
-	/// Helpers
-	TVertex transformVertex(const TVertex& v);
+	static TShader* g_defaultShader;
 };
 
 #endif // T_GFX_H
