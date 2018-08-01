@@ -9,17 +9,26 @@
 
 class LightShader : public DefaultShader {
 public:
+	TTexture* matcap;
 	glm::vec3 L = glm::vec3(-1.0f);
 
 	glm::vec4 pixel(TPixelInput in) override {
 		glm::vec3 V = glm::normalize(glm::vec3(-in.vertexPositions));
-		glm::vec3 H = glm::normalize(L + V);
 
 		glm::vec4 supColor = DefaultShader::pixel(in);
-		float nl = glm::max(glm::dot(in.normals, L), 0.0f) + 0.2f;
-		float spec = glm::pow(glm::max(0.0f, glm::dot(in.normals, H)), 60.0f) * nl;
+		float nl = glm::min(glm::max(glm::dot(in.normals, L), 0.0f) + 0.15f, 1.0f);
+		
+		glm::vec3 r = glm::reflect(V, in.normals);
+		float m = 2.0f * glm::sqrt(
+			glm::pow(r.x, 2.0f) +
+			glm::pow(r.y, 2.0f) +
+			glm::pow(r.z + 1.0f, 2.0f)
+		);
+		glm::vec2 texCo = glm::vec2(r) / m + 0.5f;
 
-		return glm::vec4(glm::vec3(supColor * (nl + spec)), 1.0f);
+		glm::vec4 matCapColor = matcap->getBilinear(texCo.x, texCo.y);
+
+		return glm::vec4(glm::vec3(supColor * matCapColor * nl), 1.0f);
 		// return glm::vec4(in.normals * 0.5f + 0.5f, 1.0f);
 	}
 };
@@ -30,32 +39,6 @@ const float TRENDER_DOWNSCALE = 1.0f;
 
 int main(int argc, char** argv) {
 	float rot = 0.0f;
-
-	// const TVertex CUBE_V[] = {
-	// 	{ { -1.0f, -1.0f, -1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
-	// 	{ {  1.0f, -1.0f, -1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
-	// 	{ {  1.0f,  1.0f, -1.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
-	// 	{ { -1.0f,  1.0f, -1.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 0.0f, -1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
-
-	// 	{ { -1.0f, -1.0f, 1.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
-	// 	{ {  1.0f, -1.0f, 1.0f, 1.0f }, { 1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
-	// 	{ {  1.0f,  1.0f, 1.0f, 1.0f }, { 1.0f, 1.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } },
-	// 	{ { -1.0f,  1.0f, 1.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 0.0f, 1.0f }, { 1.0f, 1.0f, 1.0f, 1.0f } }
-	// };
-	// const int CUBE_I[] = {
-	// 	0, 1, 2,  // FRONT
-	// 	2, 3, 0,
-	// 	5, 4, 7,  // BACK
-	// 	7, 6, 5,
-	// 	1, 5, 6,  // RIGHT
-	// 	6, 2, 1,
-	// 	4, 0, 3,  // LEFT
-	// 	3, 7, 4,
-	// 	3, 2, 6,  // TOP
-	// 	6, 7, 3,
-	// 	1, 0, 4,  // BOTTOM
-	// 	4, 5, 1
-	// };
 
 	Assimp::Importer imp;
 	const aiScene* scene = imp.ReadFile("teapot.obj",
@@ -105,8 +88,9 @@ int main(int argc, char** argv) {
 
 	GFX gfx = GFX::create("TRender", TRENDER_WIDTH, TRENDER_HEIGHT, TRENDER_DOWNSCALE).value();
 
-	TTexture* tex = new TTexture("tex_low.jpg");
-	TShader* shd = new LightShader();
+	TTexture* tex = new TTexture("tex.jpg");
+	TTexture* matcap = new TTexture("matcap4.jpg");
+	LightShader* shd = new LightShader();
 
 	const double timeStep = 1.0 / 60.0;
 	double lastTime = gfx.time();
@@ -127,35 +111,35 @@ int main(int argc, char** argv) {
 			accum -= timeStep;
 			rot += 0.01f;
 			canRender = true;
+
+			std::cout << "FPS: " << (1.0f/delta) << std::endl;
 		}
 
-		float pos = (std::sin(rot * 1.5f) * 0.5f + 0.5f) * 6.0f;
+		float pos = (std::sin(rot * 1.5f) * 0.5f + 0.5f) * 8.0f;
 		if (canRender) {
 			gfx.clear();
 
 			gfx.projection().loadIdentity();
-			gfx.projection().perspective(glm::radians(60.0f), 640.0f/480.0f, 0.01f, 200.0f);
+			gfx.projection().perspective(glm::radians(70.0f), 640.0f/480.0f, 0.01f, 200.0f);
 
 			gfx.modelView().loadIdentity();
-			gfx.modelView().translate(glm::vec3(0.0f, 1.0f, -8.0f));
-			gfx.modelView().rotate(M_PI, glm::vec3(1, 0, 0));
+			gfx.modelView().translate(glm::vec3(0.0f, 0.2f, -5));
+			gfx.modelView().rotate(M_PI-M_PI/4, glm::vec3(1, 0, 0));
 			gfx.modelView().rotate(rot, glm::vec3(0, 1, 0));
 			//gfx.modelView().rotate(rot*1.25f, glm::vec3(0, 0, 1));
 
-			gfx.boundTexture(tex);
+			// gfx.boundTexture(tex);
+
+			shd->matcap = matcap;
 			gfx.boundShader(shd);
-			for (int i = 0; i < indices.size(); i+=3) {
-				TVertex v0 = vertices[indices[i + 0]];
-				TVertex v1 = vertices[indices[i + 1]];
-				TVertex v2 = vertices[indices[i + 2]];
-				gfx.triangle(v0, v1, v2);
-			}
+			gfx.mesh(vertices, indices);
 
 			gfx.flip();
 		}
 	}
 
 	delete tex;
+	delete matcap;
 	delete shd;
 
 	gfx.destroy();

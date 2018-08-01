@@ -2,7 +2,8 @@
 
 TFrameBuffer::TFrameBuffer(int w, int h) {
 	m_texture = new TTexture(w, h);
-	m_depthBuffer = new float[w * h];
+	m_depthBuffer.resize(w * h);
+	std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), 0.0f);
 }
 
 float TFrameBuffer::depth(int x, int y) const {
@@ -21,15 +22,9 @@ void TFrameBuffer::depth(int x, int y, float d) {
 
 TFrameBuffer::~TFrameBuffer() {
 	delete m_texture;
-
-	if (m_depthBuffer != nullptr) {
-		delete[] m_depthBuffer;
-		m_depthBuffer = nullptr;
-	}
 }
 
 void TFrameBuffer::clear(const glm::vec4& color) {
-	int pixelCount = width() * height();
-	std::fill_n(m_depthBuffer, pixelCount, 0.0f);
-	std::fill_n(m_texture->pixels(), pixelCount, color);
+	std::fill(m_depthBuffer.begin(), m_depthBuffer.end(), 0.0f);
+	m_texture->clear(color);
 }

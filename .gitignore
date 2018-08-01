@@ -1,2 +1,7 @@
-[Bb]uild/
+CMakeCache.txt
+CMakeFiles/
+*.json
+*.cmake
+Makefile
+trender
 .vscode/

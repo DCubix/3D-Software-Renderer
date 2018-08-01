@@ -2,9 +2,12 @@
 
 #include <iostream>
 #include <algorithm>
+#include <numeric>
+#include <future>
 #include <cstring>
 #include <cmath>
 #include <vector>
+#include <utility>
 
 void showError() {
 	std::cerr << SDL_GetError() << std::endl;
@@ -61,6 +64,22 @@ std::optional<GFX> GFX::create(const std::string title, int width, int height, f
 	gfx.m_boundTexture = nullptr;
 	gfx.m_boundShader = g_defaultShader;
 
+	const int tilesX = (tw / T_TILE_SIZE);
+	const int tilesY = (th / T_TILE_SIZE);
+
+	gfx.m_screenTiles.resize(tilesX * tilesY);
+
+	for (int y = 0; y < tilesY; y++) {
+		for (int x = 0; x < tilesX; x++) {
+			gfx.m_screenTiles[x + y * tilesX] = TAABB(
+				x * T_TILE_SIZE,
+				y * T_TILE_SIZE,
+				x * T_TILE_SIZE + T_TILE_SIZE,
+				y * T_TILE_SIZE + T_TILE_SIZE
+			);
+		}
+	}
+
 	return std::make_optional(gfx);
 }
 
@@ -75,6 +94,7 @@ void GFX::flip() {
 	Uint8* pixels;
 	int pitch;
 	SDL_LockTexture(m_screenBuffer, nullptr, (void**) &pixels, &pitch);
+
 	for (int y = 0; y < m_drawHeight; y++) {
 		for (int x = 0; x < m_drawWidth; x++) {
 			int index = x + y * m_drawWidth;
@@ -83,17 +103,12 @@ void GFX::flip() {
 			int newR = int(col.r * 255);
 			int newG = int(col.g * 255);
 			int newB = int(col.b * 255);
-			if (pixels[pidx + 0] != newR) {
-				pixels[pidx + 0] = newR;
-			}
-			if (pixels[pidx + 1] != newG) {
-				pixels[pidx + 1] = newG;
-			}
-			if (pixels[pidx + 2] != newB) {
-				pixels[pidx + 2] = newB;
-			}
+			pixels[pidx + 0] = newR;
+			pixels[pidx + 1] = newG;
+			pixels[pidx + 2] = newB;
 		}
 	}
+
 	SDL_UnlockTexture(m_screenBuffer);
 
 	SDL_RenderClear(m_renderer);
@@ -105,6 +120,7 @@ void GFX::flip() {
 }
 
 void GFX::destroy() {
+	delete m_defaultTarget;
 	SDL_DestroyTexture(m_screenBuffer);
 	SDL_DestroyRenderer(m_renderer);
 	SDL_DestroyWindow(m_window);
@@ -220,36 +236,15 @@ static float wrap(float flt, float max) {
 	return flt;
 }
 
-void GFX::triangle(const TVertex& v0, const TVertex& v1, const TVertex& v2) {
-	glm::mat4 mvp = projection().matrix() * modelView().matrix();
-
-	std::vector<TVertex> vertices, aux;
-	vertices.insert(vertices.end(), {
-		boundShader()->vertex(projection().matrix(), modelView().matrix(), v0),
-		boundShader()->vertex(projection().matrix(), modelView().matrix(), v1),
-		boundShader()->vertex(projection().matrix(), modelView().matrix(), v2)
-	});
-	// vertices.insert(vertices.end(), {
-	// 	v0.transform(mvp),
-	// 	v1.transform(mvp),
-	// 	v2.transform(mvp)
-	// });
-	if (clipPolygonAxis(vertices, aux, 0) &&
-		clipPolygonAxis(vertices, aux, 1) &&
-		clipPolygonAxis(vertices, aux, 2))
-	{
-		TVertex initial = vertices[0];
-		for (int i = 1; i < vertices.size() - 1; i++) {
-			triangleUC(initial, vertices[i], vertices[i + 1]);
-		}
-	}
-}
-
-void GFX::triangleUC(const TVertex& v0, const TVertex& v1, const TVertex& v2) {
+std::optional<TTriangle> GFX::createTriangle(const TVertex& v0, const TVertex& v1, const TVertex& v2) {
 	TTriangle tri;
 	tri.v0 = v0;
 	tri.v1 = v1;
 	tri.v2 = v2;
+
+	tri.vp0 = v0.position;
+	tri.vp1 = v1.position;
+	tri.vp2 = v2.position;
 
 	/// Perspective Divide
 	tri.v0.position /= v0.position.w;
@@ -269,7 +264,7 @@ void GFX::triangleUC(const TVertex& v0, const TVertex& v1, const TVertex& v2) {
 	glm::vec3 tN = glm::cross(glm::vec3(_vs1), glm::vec3(_vs2));
 
 	if (glm::dot(tN, tV) <= 0.0f) {
-		return;
+		return {};
 	}
 
 	/// To screen space
@@ -277,56 +272,205 @@ void GFX::triangleUC(const TVertex& v0, const TVertex& v1, const TVertex& v2) {
 	vt1 = toScreenSpace(vt1, m_drawWidth, m_drawHeight);
 	vt2 = toScreenSpace(vt2, m_drawWidth, m_drawHeight);
 
-	int maxX = std::max(vt0.position.x, std::max(vt1.position.x, vt2.position.x));
-	int minX = std::min(vt0.position.x, std::min(vt1.position.x, vt2.position.x));
-	int maxY = std::max(vt0.position.y, std::max(vt1.position.y, vt2.position.y));
-	int minY = std::min(vt0.position.y, std::min(vt1.position.y, vt2.position.y));
+	tri.maxX = std::max(vt0.position.x, std::max(vt1.position.x, vt2.position.x));
+	tri.minX = std::min(vt0.position.x, std::min(vt1.position.x, vt2.position.x));
+	tri.maxY = std::max(vt0.position.y, std::max(vt1.position.y, vt2.position.y));
+	tri.minY = std::min(vt0.position.y, std::min(vt1.position.y, vt2.position.y));
 
+	tri.v0 = vt0;
+	tri.v1 = vt1;
+	tri.v2 = vt2;
+
+	return std::make_optional(tri);
+}
+
+std::vector<TTile> GFX::buildTiles(const std::vector<TTriangle>& tris) {
+	moodycamel::ConcurrentQueue<std::pair<int, int>> tileIDs;
+
+	const int tilesX = (m_drawWidth / T_TILE_SIZE);
+	const int tilesY = (m_drawHeight / T_TILE_SIZE);
+	const glm::vec2 res(m_drawWidth, m_drawHeight);
+	const glm::vec2 tilesXY(tilesX, tilesY);
+	
+	#pragma omp parallel for schedule(dynamic)
+	for (int triangleID = 0; triangleID < tris.size(); triangleID++) {
+		TTriangle tri = tris[triangleID];
+		glm::vec2 triMin(tri.minX, tri.minY);
+		glm::vec2 triMax(tri.maxX, tri.maxY);
+
+		triMin /= res;
+		triMax /= res;
+
+		triMin *= tilesXY;
+		triMax *= tilesXY;
+
+		triMin = glm::floor(triMin);
+		triMax = glm::ceil(triMax);
+
+		for (int ty = triMin.y; ty < triMax.y; ty++) {
+			for (int tx = triMin.x; tx < triMax.x; tx++) {
+				int tileID = tx + ty * tilesX;
+				tileIDs.enqueue(std::make_pair(tileID, triangleID));
+			}
+		}
+	}
+
+	std::vector<std::pair<int, int>> tileIDsv;
+	tileIDsv.reserve(tileIDs.size_approx());
+
+	std::pair<int, int> tileID;
+	while (tileIDs.try_dequeue(tileID)) {
+		tileIDsv.push_back(tileID);
+	}
+
+	std::sort(tileIDsv.begin(), tileIDsv.end(), [&](std::pair<int, int> a, std::pair<int, int> b){
+		return a.first < b.first;
+	});
+
+	std::vector<TTile> tiles;
+	int tid = -1;
+	for (auto ttid : tileIDsv) {
+		if (ttid.first != tid) {
+			tiles.push_back(TTile());
+			TTile& tile = tiles.back();
+			tile.x = (ttid.first % tilesX) * T_TILE_SIZE;
+			tile.y = (ttid.first / tilesX) * T_TILE_SIZE;
+			tid = ttid.first;
+		}
+		TTile& tile = tiles.back();
+		tile.triangles.push_back(tris[ttid.second]);
+	}
+	
+	// std::cout << "TILES THIS FRAME: " << tiles.size() << std::endl;
+	return tiles;
+}
+
+void GFX::drawTile(const TTile& tile) {
 	const float BX = 1.0f / m_drawWidth;
 	const float BY = 1.0f / m_drawHeight;
 
-	for (int x = minX; x < maxX; x++) {
-		for (int y = minY; y < maxY; y++) {
-			glm::vec3 bc = barycentric(
-				glm::vec2(x, y),
-				vt0.position,
-				vt1.position,
-				vt2.position
-			);
+	for (TTriangle tri : tile.triangles) {
+		for (int y = tile.y; y < tile.y + T_TILE_SIZE; y++) {
+			for (int x = tile.x; x < tile.x + T_TILE_SIZE; x++) {
+				glm::vec3 bc = barycentric(
+					glm::vec2(x, y),
+					tri.v0.position,
+					tri.v1.position,
+					tri.v2.position
+				);
 
-			if (bc.x < -BX || bc.y < -BY || bc.z < 0.0f) { continue; }
+				if (bc.x < -BX || bc.y < -BY || bc.z < 0.0f) { continue; }
 
-			glm::vec3 P = glm::vec3(
-				bc.x / v0.position.w,
-				bc.y / v1.position.w,
-				bc.z / v2.position.w
-			);
-			float d = (P.x + P.y + P.z);
-			P = (1.0f / d) * P;
+				glm::vec3 P = glm::vec3(
+					bc.x / tri.vp0.w,
+					bc.y / tri.vp1.w,
+					bc.z / tri.vp2.w
+				);
+				float d = (P.x + P.y + P.z);
+				P = (1.0f / d) * P;
 
-			float z = d / 3.0f;
-			
-			if (target()->depth(x, y) < z) {
-				glm::vec4 col = P.x * v0.color + P.y * v1.color + P.z * v2.color;
-				glm::vec2 uv = P.x * vt0.uv + P.y * vt1.uv + P.z * vt2.uv;
-				uv.x = wrap(uv.x, 1.0f);
-				uv.y = wrap(uv.y, 1.0f);
-				
-				TPixelInput pi;
-				pi.boundTexture = m_boundTexture;
-				pi.vertexPositions = P.x * v0.position + P.y * v1.position + P.z * v2.position;
-				pi.normals = glm::normalize(P.x * vt0.normal + P.y * vt1.normal + P.z * vt2.normal);
-				pi.texCoords = uv;
-				pi.vertexColors = col;
+				float z = d / 3.0f;
 
-				glm::vec4 pixelColor = glm::clamp(boundShader()->pixel(pi), 0.0f, 1.0f);
-				if (!boundShader()->m_discard) {
-					pixel(x, y, pixelColor);
-					target()->depth(x, y, z);
-				} else {
-					boundShader()->m_discard = false;
+				if (target()->depth(x, y) < z) {
+					glm::vec4 col = P.x * tri.v0.color + P.y * tri.v1.color + P.z * tri.v2.color;
+					glm::vec2 uv = P.x * tri.v0.uv + P.y * tri.v1.uv + P.z * tri.v2.uv;
+					uv.x = wrap(uv.x, 1.0f);
+					uv.y = wrap(uv.y, 1.0f);
+					
+					TPixelInput pi;
+					pi.boundTexture = m_boundTexture;
+					pi.vertexPositions = P.x * tri.vp0 + P.y * tri.vp1 + P.z * tri.vp2;
+					pi.normals = glm::normalize(P.x * tri.v0.normal + P.y * tri.v1.normal + P.z * tri.v2.normal);
+					pi.texCoords = uv;
+					pi.vertexColors = col;
+
+					glm::vec4 pixelColor = glm::clamp(boundShader()->pixel(pi), 0.0f, 1.0f);
+					if (!boundShader()->m_discard) {
+						pixel(x, y, pixelColor);
+						target()->depth(x, y, z);
+					} else {
+						boundShader()->m_discard = false;
+					}
 				}
 			}
 		}
 	}
+
+	// line(tile.x, tile.y, tile.x+T_TILE_SIZE, tile.y, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
+	// line(tile.x+T_TILE_SIZE, tile.y, tile.x+T_TILE_SIZE, tile.y+T_TILE_SIZE, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
+	// line(tile.x, tile.y+T_TILE_SIZE, tile.x+T_TILE_SIZE, tile.y+T_TILE_SIZE, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
+	// line(tile.x, tile.y, tile.x, tile.y+T_TILE_SIZE, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
+}
+
+std::vector<TVertex> GFX::triangleProcess(const TVertex& v0, const TVertex& v1, const TVertex& v2) {
+	glm::mat4 mvp = projection().matrix() * modelView().matrix();
+
+	std::vector<TVertex> vertices, aux;
+	vertices.insert(vertices.end(), {
+		boundShader()->vertex(projection().matrix(), modelView().matrix(), v0),
+		boundShader()->vertex(projection().matrix(), modelView().matrix(), v1),
+		boundShader()->vertex(projection().matrix(), modelView().matrix(), v2)
+	});
+	
+	std::vector<TVertex> triangles;
+	
+	if (clipPolygonAxis(vertices, aux, 0) &&
+		clipPolygonAxis(vertices, aux, 1) &&
+		clipPolygonAxis(vertices, aux, 2))
+	{
+		TVertex initial = vertices[0];
+		for (int i = 1; i < vertices.size() - 1; i++) {
+			TTriangle tri;
+			triangles.push_back(initial);
+			triangles.push_back(vertices[i]);
+			triangles.push_back(vertices[i+1]);
+		}
+	}
+	return triangles;
+}
+
+void GFX::mesh(const std::vector<TVertex>& vertices, const std::vector<int>& indices) {
+	moodycamel::ConcurrentQueue<TTriangle> triangles;
+
+	auto clk = BEGIN_BENCH;
+
+	#pragma omp parallel for schedule(dynamic)
+	for (int i = 0; i < indices.size(); i+=3) {
+		TVertex v0 = vertices[indices[i + 0]];
+		TVertex v1 = vertices[indices[i + 1]];
+		TVertex v2 = vertices[indices[i + 2]];
+
+		std::vector<TVertex> verticesProc = triangleProcess(v0, v1, v2);
+		for (int i = 0; i < verticesProc.size(); i+=3) {
+			TVertex vt0 = verticesProc[i];
+			TVertex vt1 = verticesProc[i+1];
+			TVertex vt2 = verticesProc[i+2];
+
+			std::optional<TTriangle> optTri = createTriangle(vt0, vt1, vt2);
+			if (optTri.has_value()) {
+				triangles.enqueue(optTri.value());
+			}
+		}
+	}
+	END_BENCH(clk, "CLIPPING and TRANSFORMATIONS");
+
+	std::vector<TTriangle> trianglesVec;
+	trianglesVec.reserve(triangles.size_approx());
+	
+	TTriangle tri;
+	while (triangles.try_dequeue(tri)) {
+		trianglesVec.push_back(tri);
+	}
+
+	clk = BEGIN_BENCH;
+	std::vector<TTile> tiles = buildTiles(trianglesVec);
+	END_BENCH(clk, "TILE GENERATION");
+
+	clk = BEGIN_BENCH;
+	#pragma omp parallel for schedule(dynamic)
+	for (int i = 0; i < tiles.size(); i++) {
+		TTile tile = tiles[i];
+		drawTile(tile);
+	}
+	END_BENCH(clk, "RENDERING");
 }

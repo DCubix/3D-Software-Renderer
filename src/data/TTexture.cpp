@@ -5,8 +5,9 @@
 TTexture::TTexture(int w, int h) {
 	m_width = w;
 	m_height = h;
-	m_pixels = new glm::vec4[w * h];
-	std::fill_n(m_pixels, w * h, glm::vec4(0.0f));
+	m_size = std::max(m_width, m_height);
+	m_pixels.resize(m_size * m_size);
+	std::fill(m_pixels.begin(), m_pixels.end(), glm::vec4(0.0f, 0.0f, 0.0f, 0.0f));
 }
 
 TTexture::TTexture(const std::string& fileName) {
@@ -15,35 +16,57 @@ TTexture::TTexture(const std::string& fileName) {
 	if (pixels) {
 		m_width = w;
 		m_height = h;
-		m_pixels = new glm::vec4[w * h];
-		std::fill_n(m_pixels, w * h, glm::vec4(1.0f));
+		m_size = std::max(m_width, m_height);
+		m_pixels.resize(m_size * m_size);
+		std::fill(m_pixels.begin(), m_pixels.end(), glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
 		
-		for (int i = 0; i < w*h; i++) {
-			int j = i*comp;
-			for (int k = 0; k < comp; k++) {
-				m_pixels[i][k] = float(pixels[j + k]) / 255.0f;
+		for (int y = 0; y < m_height; y++) {
+			for (int x = 0; x < m_width; x++) {
+				int i = (x + (m_height - 1 - y) * m_width) * comp;
+				glm::vec4 col(0.0f, 0.0f, 0.0f, 1.0f);
+				for (int k = 0; k < comp; k++) {
+					col[k] = pixels[i + k] / 255.0f;
+				}
+				set(x, y, col);
 			}
 		}
-
+		stbi_image_free(pixels);
 	} else {
-		m_pixels = nullptr;
 		m_width = 0;
 		m_height = 0;
 	}
 }
 
 TTexture::~TTexture() {
-	if (m_pixels != nullptr) {
-		delete[] m_pixels;
-		m_pixels = nullptr;
-	}
+}
+
+uint32_t TTexture::calcZOrder(uint16_t xPos, uint16_t yPos) {
+	static const uint32_t MASKS[] = {0x55555555, 0x33333333, 0x0F0F0F0F, 0x00FF00FF};
+	static const uint32_t SHIFTS[] = {1, 2, 4, 8};
+
+	uint32_t x = xPos;  // Interleave lower 16 bits of x and y, so the bits of x
+	uint32_t y = yPos;  // are in the even positions and bits from y in the odd;
+
+	x = (x | (x << SHIFTS[3])) & MASKS[3];
+	x = (x | (x << SHIFTS[2])) & MASKS[2];
+	x = (x | (x << SHIFTS[1])) & MASKS[1];
+	x = (x | (x << SHIFTS[0])) & MASKS[0];
+
+	y = (y | (y << SHIFTS[3])) & MASKS[3];
+	y = (y | (y << SHIFTS[2])) & MASKS[2];
+	y = (y | (y << SHIFTS[1])) & MASKS[1];
+	y = (y | (y << SHIFTS[0])) & MASKS[0];
+
+	const uint32_t result = x | (y << 1);
+	return result;
 }
 
 glm::vec4 TTexture::get(int x, int y) const {
 	if (x < 0 || x >= m_width || y < 0 || y >= m_height) {
-		return glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+		return glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
 	}
-	return m_pixels[x + y * m_width];
+	// return m_pixels[calcZOrder(x, y)];
+	return m_pixels[x+y*m_width];
 }
 
 glm::vec4 TTexture::get(float s, float t) const {
@@ -74,12 +97,14 @@ void TTexture::set(int x, int y, const glm::vec4& color) {
 	if (x < 0 || x >= m_width || y < 0 || y >= m_height) {
 		return;
 	}
-	if (color.a <= 0.0f) {
-		return;
-	}
-	int index = x + y * m_width;
+	int index = x+y*m_width;//calcZOrder(x, y);
 	glm::vec4 newPixel = glm::mix(m_pixels[index], color, color.a);
 	m_pixels[index].r = newPixel.r;
 	m_pixels[index].g = newPixel.g;
 	m_pixels[index].b = newPixel.b;
+	m_pixels[index].a = newPixel.a;
+}
+
+void TTexture::clear(glm::vec4 color) {
+	std::fill(m_pixels.begin(), m_pixels.end(), color);
 }

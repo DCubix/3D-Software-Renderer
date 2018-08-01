@@ -17,3 +17,11 @@ TVertex TVertex::lerp(const TVertex& other, float amt) {
 	tvx.uv = glm::mix(uv, other.uv, amt);
 	return tvx;
 }
+
+bool TAABB::overlaps(const TAABB& other) {
+	if (other.minX > maxX || other.maxX < minX)
+		return false;
+	else if (other.minY > maxY || other.maxY < minY)
+		return false;
+	return true;
+}

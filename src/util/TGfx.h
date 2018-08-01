@@ -4,6 +4,8 @@
 #include <string>
 #include <optional>
 #include <array>
+#include <vector>
+#include <chrono>
 
 #include "SDL2/SDL.h"
 #include "vec3.hpp"
@@ -14,7 +16,26 @@
 #include "../data/TStructs.h"
 #include "../data/TFrameBuffer.h"
 
+#include "concurrentqueue.h"
+
 #define T_MAX_MATRIX_TACK_DEPTH 128
+#define T_TILE_SIZE 16
+
+#ifndef NDEBUG
+#define BEGIN_BENCH std::chrono::high_resolution_clock::now()
+#define END_BENCH(clk, name) std::cout << "RUNTIME OF " << name << ": " << \
+    std::chrono::duration_cast<std::chrono::milliseconds>( \
+            std::chrono::high_resolution_clock::now() - clk \
+    ).count() << " ms " << std::endl; 
+#else
+#define BEGIN_BENCH 0
+#define END_BENCH
+#endif
+
+struct TTile {
+	int x, y;
+	std::vector<TTriangle> triangles;
+};
 
 class GFX {
 public:
@@ -35,8 +56,7 @@ public:
 	void line(int x1, int y1, int x2, int y2, glm::vec4 color);
 
 	/// 3D drawing
-	void triangle(const TVertex& v0, const TVertex& v1, const TVertex& v2);
-	void triangleUC(const TVertex& v0, const TVertex& v1, const TVertex& v2);
+	void mesh(const std::vector<TVertex>& vertices, const std::vector<int>& indices);
 
 	TMatrixStack& modelView() { return m_modelMatrixStack; }
 	TMatrixStack& projection() { return m_projectionMatrixStack; }
@@ -79,7 +99,14 @@ private:
 	TMatrixStack m_modelMatrixStack, m_projectionMatrixStack;
 	glm::mat4 m_viewportMatrix;
 
+	std::vector<TAABB> m_screenTiles;
+
 	static TShader* g_defaultShader;
+
+	void drawTile(const TTile& tile);
+	std::optional<TTriangle> createTriangle(const TVertex& v0, const TVertex& v1, const TVertex& v2);
+	std::vector<TTile> buildTiles(const std::vector<TTriangle>& tris);
+	std::vector<TVertex> triangleProcess(const TVertex& v0, const TVertex& v1, const TVertex& v2);
 };
 
 #endif // T_GFX_H

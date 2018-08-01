@@ -21,6 +21,19 @@ struct TVertex {
 
 struct TTriangle {
 	TVertex v0, v1, v2;
+	glm::vec4 vp0, vp1, vp2;
+	int minX, minY, maxX, maxY;
+};
+
+struct TAABB {
+	int minX, minY, maxX, maxY;
+
+	TAABB() {}
+	TAABB(int minX, int minY, int maxX, int maxY)
+		: minX(minX), minY(minY), maxX(maxX), maxY(maxY)
+	{}
+
+	bool overlaps(const TAABB& other);
 };
 
 struct TPixelInput {

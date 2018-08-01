@@ -20,7 +20,7 @@ public:
 	virtual ~TFrameBuffer();
 
 private:
-	float* m_depthBuffer;
+	std::vector<float> m_depthBuffer;
 	TTexture* m_texture;
 };
 
